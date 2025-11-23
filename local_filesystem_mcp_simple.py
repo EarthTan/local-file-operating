@@ -85,6 +85,30 @@ class SearchArgs(BaseModel):
 class SetWorkingDirectoryArgs(BaseModel):
     path: str
 
+# 部分编辑参数模型
+class AppendFileArgs(BaseModel):
+    file_path: str
+    content: str
+
+class InsertFileArgs(BaseModel):
+    file_path: str
+    line_number: int
+    content: str
+
+class ReplaceFileArgs(BaseModel):
+    file_path: str
+    search_text: str
+    replace_text: str
+
+class DeleteFileArgs(BaseModel):
+    file_path: str
+    line_start: int
+    line_end: int
+
+class PatchFileArgs(BaseModel):
+    file_path: str
+    patch_content: str
+
 # -----------------------------
 # 辅助函数
 # -----------------------------
@@ -293,6 +317,204 @@ async def reset_working_directory(ctx: Context[ServerSession, None]) -> str:
         return f"工作目录已重置为默认：{default_root}"
     except Exception as e:
         await ctx.error(f"重置工作目录失败：{str(e)}")
+        raise
+
+# -----------------------------
+# 部分文件编辑工具
+# -----------------------------
+@mcp.tool()
+async def append_to_file(ctx: Context[ServerSession, None], args: AppendFileArgs) -> str:
+    """在文件末尾追加内容"""
+    try:
+        path = resolve_path(args.file_path, must_exist=True)
+        
+        if not path.is_file():
+            raise ValueError(f"路径不是文件：{path}")
+            
+        if not _has_allowed_extension(path):
+            raise PermissionError(f"不允许写入该文件类型：{path.suffix}")
+
+        # 读取现有内容
+        existing_content = path.read_text(encoding="utf-8")
+        
+        # 追加新内容
+        new_content = existing_content + args.content
+        path.write_text(new_content, encoding="utf-8")
+        
+        await ctx.info(f"在文件末尾追加内容：{path} (追加了 {len(args.content)} 字符)")
+        return f"内容已追加到文件：{_norm_path_str(path)}"
+        
+    except Exception as e:
+        await ctx.error(f"追加文件内容失败：{str(e)}")
+        raise
+
+@mcp.tool()
+async def insert_into_file(ctx: Context[ServerSession, None], args: InsertFileArgs) -> str:
+    """在指定行号插入内容"""
+    try:
+        path = resolve_path(args.file_path, must_exist=True)
+        
+        if not path.is_file():
+            raise ValueError(f"路径不是文件：{path}")
+            
+        if not _has_allowed_extension(path):
+            raise PermissionError(f"不允许写入该文件类型：{path.suffix}")
+
+        # 读取现有内容
+        lines = path.read_text(encoding="utf-8").splitlines()
+        
+        # 验证行号
+        if args.line_number < 1 or args.line_number > len(lines) + 1:
+            raise ValueError(f"行号超出范围：{args.line_number} (文件有 {len(lines)} 行)")
+        
+        # 插入新内容
+        lines.insert(args.line_number - 1, args.content)
+        new_content = "\n".join(lines)
+        path.write_text(new_content, encoding="utf-8")
+        
+        await ctx.info(f"在文件第 {args.line_number} 行插入内容：{path}")
+        return f"内容已插入到文件第 {args.line_number} 行：{_norm_path_str(path)}"
+        
+    except Exception as e:
+        await ctx.error(f"插入文件内容失败：{str(e)}")
+        raise
+
+@mcp.tool()
+async def replace_in_file(ctx: Context[ServerSession, None], args: ReplaceFileArgs) -> str:
+    """搜索并替换文件中的文本"""
+    try:
+        path = resolve_path(args.file_path, must_exist=True)
+        
+        if not path.is_file():
+            raise ValueError(f"路径不是文件：{path}")
+            
+        if not _has_allowed_extension(path):
+            raise PermissionError(f"不允许写入该文件类型：{path.suffix}")
+
+        # 读取现有内容
+        content = path.read_text(encoding="utf-8")
+        
+        # 执行替换
+        if args.search_text not in content:
+            raise ValueError(f"未找到要替换的文本：{args.search_text}")
+            
+        new_content = content.replace(args.search_text, args.replace_text)
+        path.write_text(new_content, encoding="utf-8")
+        
+        replacements = content.count(args.search_text)
+        await ctx.info(f"在文件中替换文本：{path} (替换了 {replacements} 处)")
+        return f"文本替换完成：{_norm_path_str(path)} (替换了 {replacements} 处)"
+        
+    except Exception as e:
+        await ctx.error(f"替换文件内容失败：{str(e)}")
+        raise
+
+@mcp.tool()
+async def delete_from_file(ctx: Context[ServerSession, None], args: DeleteFileArgs) -> str:
+    """删除指定行范围的内容"""
+    try:
+        path = resolve_path(args.file_path, must_exist=True)
+        
+        if not path.is_file():
+            raise ValueError(f"路径不是文件：{path}")
+            
+        if not _has_allowed_extension(path):
+            raise PermissionError(f"不允许写入该文件类型：{path.suffix}")
+
+        # 读取现有内容
+        lines = path.read_text(encoding="utf-8").splitlines()
+        
+        # 验证行号范围
+        if args.line_start < 1 or args.line_end > len(lines) or args.line_start > args.line_end:
+            raise ValueError(f"行号范围无效：{args.line_start}-{args.line_end} (文件有 {len(lines)} 行)")
+        
+        # 删除指定行范围
+        del lines[args.line_start - 1:args.line_end]
+        new_content = "\n".join(lines)
+        path.write_text(new_content, encoding="utf-8")
+        
+        deleted_lines = args.line_end - args.line_start + 1
+        await ctx.info(f"从文件中删除行 {args.line_start}-{args.line_end}：{path}")
+        return f"已删除文件第 {args.line_start}-{args.line_end} 行：{_norm_path_str(path)} (共 {deleted_lines} 行)"
+        
+    except Exception as e:
+        await ctx.error(f"删除文件内容失败：{str(e)}")
+        raise
+
+@mcp.tool()
+async def patch_file(ctx: Context[ServerSession, None], args: PatchFileArgs) -> str:
+    """应用统一差异格式的补丁"""
+    try:
+        path = resolve_path(args.file_path, must_exist=True)
+        
+        if not path.is_file():
+            raise ValueError(f"路径不是文件：{path}")
+            
+        if not _has_allowed_extension(path):
+            raise PermissionError(f"不允许写入该文件类型：{path.suffix}")
+
+        # 读取现有内容
+        original_content = path.read_text(encoding="utf-8")
+        original_lines = original_content.splitlines()
+        
+        # 解析补丁内容
+        patch_lines = args.patch_content.splitlines()
+        new_lines = original_lines.copy()
+        
+        # 简单的补丁应用逻辑（简化版）
+        # 在实际应用中，应该使用更完整的diff解析库
+        line_offset = 0
+        i = 0
+        while i < len(patch_lines):
+            line = patch_lines[i]
+            if line.startswith('@@'):
+                # 解析补丁头部
+                parts = line.split(' ')
+                if len(parts) >= 3:
+                    old_range = parts[1]
+                    # 解析旧文件行范围
+                    old_parts = old_range[1:].split(',')  # 去掉开头的'-'
+                    if len(old_parts) == 2:
+                        old_start = int(old_parts[0])
+                    else:
+                        old_start = int(old_parts[0])
+                    
+                    # 计算在new_lines中的位置
+                    current_pos = old_start - 1 + line_offset
+                    
+                    # 应用补丁块
+                    j = i + 1
+                    while j < len(patch_lines) and not patch_lines[j].startswith('@@'):
+                        patch_line = patch_lines[j]
+                        if patch_line.startswith('-'):
+                            # 删除行
+                            if current_pos < len(new_lines):
+                                del new_lines[current_pos]
+                                line_offset -= 1
+                        elif patch_line.startswith('+'):
+                            # 添加行
+                            new_lines.insert(current_pos, patch_line[1:])
+                            current_pos += 1
+                            line_offset += 1
+                        else:
+                            # 保留行
+                            current_pos += 1
+                        j += 1
+                    i = j  # 跳过已处理的补丁块
+                else:
+                    i += 1
+            else:
+                i += 1
+        
+        # 写入修改后的内容
+        new_content = "\n".join(new_lines)
+        path.write_text(new_content, encoding="utf-8")
+        
+        await ctx.info(f"应用补丁到文件：{path}")
+        return f"补丁已应用到文件：{_norm_path_str(path)}"
+        
+    except Exception as e:
+        await ctx.error(f"应用补丁失败：{str(e)}")
         raise
 
 # -----------------------------
