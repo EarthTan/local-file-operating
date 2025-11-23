@@ -1,10 +1,11 @@
-# 本地文件系统 MCP 服务器（简化版）
+# 本地文件系统 MCP 服务器（简化版）- Obsidian 集成
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![MCP Protocol](https://img.shields.io/badge/MCP-Protocol-green.svg)](https://modelcontextprotocol.io)
+[![Obsidian](https://img.shields.io/badge/Obsidian-集成-purple.svg)](https://obsidian.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-一个简洁高效的本地文件系统 MCP 服务器，支持动态路径配置和丰富的文件操作功能。专为 AI 助手和自动化工具设计，提供安全的文件系统访问能力。
+一个简洁高效的本地文件系统 MCP 服务器，专门为 **Obsidian 笔记库** 和 Markdown 文件管理设计。支持动态路径配置和丰富的文件操作，让 AI 助手能够安全地与您的 Obsidian 笔记和知识库进行交互。
 
 ## 📖 项目背景
 
@@ -16,6 +17,23 @@
 - **开发体验**：更清晰的架构和更好的文档
 
 原项目采用 MIT 许可证，本项目同样遵循 MIT 许可证。
+
+## 🗂️ Obsidian 集成
+
+### 专为 Obsidian 笔记库优化
+这个服务器专门为管理 **Obsidian 笔记库** 和 Markdown 文件进行了优化。它为 AI 助手提供了强大的工具来与您的知识库进行交互：
+
+- **笔记管理**：创建、读取、更新和搜索笔记
+- **内容组织**：管理文件夹和文件结构
+- **智能编辑**：在笔记中进行精确的文本操作
+- **链接管理**：处理内部链接和引用
+
+### 常见的 Obsidian 使用场景
+- **AI 辅助笔记**：让 AI 助手帮助您组织和扩展笔记
+- **自动化内容生成**：生成摘要、大纲或新内容
+- **知识库维护**：清理和重新组织您的笔记库
+- **研究辅助**：搜索和分析现有笔记
+- **模板管理**：创建和应用笔记模板
 
 ## ✨ 核心特性
 

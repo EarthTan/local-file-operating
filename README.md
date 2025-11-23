@@ -1,10 +1,11 @@
-# Local File System MCP Server (Simplified)
+# Local File System MCP Server (Simplified) - Obsidian Integration
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![MCP Protocol](https://img.shields.io/badge/MCP-Protocol-green.svg)](https://modelcontextprotocol.io)
+[![Obsidian](https://img.shields.io/badge/Obsidian-Integration-purple.svg)](https://obsidian.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A lightweight and efficient local file system MCP server with dynamic path configuration and rich file operations. Designed for AI assistants and automation tools, providing secure file system access capabilities.
+A lightweight and efficient local file system MCP server specifically designed for **Obsidian vaults** and markdown file management. With dynamic path configuration and rich file operations, this server enables AI assistants to securely interact with your Obsidian notes and knowledge base.
 
 ## 📖 Project Background
 
@@ -16,6 +17,23 @@ This project is a simplified version based on the official [MCP Python SDK](http
 - **Developer Experience**: Cleaner architecture and better documentation
 
 The original project is licensed under MIT, and this project follows the same license.
+
+## 🗂️ Obsidian Integration
+
+### Perfect for Obsidian Vaults
+This server is specifically optimized for managing **Obsidian vaults** and markdown files. It provides AI assistants with powerful tools to interact with your knowledge base:
+
+- **Note Management**: Create, read, update, and search notes
+- **Content Organization**: Manage folders and file structures
+- **Smart Editing**: Precise text manipulation within notes
+- **Link Management**: Handle internal links and references
+
+### Common Obsidian Use Cases
+- **AI-Powered Note Taking**: Let AI assistants help you organize and expand your notes
+- **Automated Content Generation**: Generate summaries, outlines, or new content
+- **Knowledge Base Maintenance**: Clean up and reorganize your vault
+- **Research Assistance**: Search and analyze your existing notes
+- **Template Management**: Create and apply note templates
 
 ## ✨ Core Features
 
