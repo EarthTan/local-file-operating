@@ -80,6 +80,7 @@ class OpenNoteArgs(BaseModel):
 
 class ReadFileArgs(BaseModel):
     file_path: str
+    open_after_read: bool = False  # 新增参数：读取后是否打开文件
 
 class ListDirArgs(BaseModel):
     directory_path: Optional[str] = None
@@ -97,25 +98,30 @@ class SetWorkingDirectoryArgs(BaseModel):
 class AppendFileArgs(BaseModel):
     file_path: str
     content: str
+    open_after_append: bool = False  # 新增参数：追加后是否打开文件
 
 class InsertFileArgs(BaseModel):
     file_path: str
     line_number: int
     content: str
+    open_after_insert: bool = False  # 新增参数：插入后是否打开文件
 
 class ReplaceFileArgs(BaseModel):
     file_path: str
     search_text: str
     replace_text: str
+    open_after_replace: bool = False  # 新增参数：替换后是否打开文件
 
 class DeleteFileArgs(BaseModel):
     file_path: str
     line_start: int
     line_end: int
+    open_after_delete: bool = False  # 新增参数：删除后是否打开文件
 
 class PatchFileArgs(BaseModel):
     file_path: str
     patch_content: str
+    open_after_patch: bool = False  # 新增参数：应用补丁后是否打开文件
 
 # -----------------------------
 # 辅助函数
@@ -227,6 +233,14 @@ async def read_file(ctx: Context[ServerSession, None], args: ReadFileArgs) -> Fi
         except UnicodeDecodeError:
             content = raw.decode("utf-8", errors="replace")
 
+        # 如果设置了读取后打开，则尝试打开文件
+        if args.open_after_read:
+            try:
+                open_file_with_obsidian(path)
+                await ctx.info(f"文件已在 Obsidian 中打开：{path}")
+            except Exception as open_error:
+                await ctx.warning(f"读取文件成功，但打开失败：{str(open_error)}")
+
         await ctx.info(f"读取文件：{path} ({size} 字节)")
         return FileContent(path=_norm_path_str(path), content=content, size=size)
         
@@ -320,18 +334,19 @@ def _get_relative_path(file_path: Path) -> str:
     except Exception:
         return str(file_path)
 
-def _search_in_file(file_path: Path, search_terms: List[str]) -> Optional[SearchResult]:
-    """在单个文件中搜索，每个文件只返回一个结果"""
+def _search_in_file(file_path: Path, search_terms: List[str]) -> List[SearchResult]:
+    """在单个文件中搜索，返回所有匹配结果"""
+    results: List[SearchResult] = []
     try:
         # 首先检查文件名是否匹配
         file_name = file_path.name.lower()
         for term in search_terms:
             if term.lower() in file_name:
-                return SearchResult(
+                results.append(SearchResult(
                     file_path=_get_relative_path(file_path),
                     line_number=0,
                     content=f"文件名匹配: {file_path.name}"
-                )
+                ))
         
         # 然后检查文件内容
         raw = file_path.read_bytes()
@@ -345,14 +360,14 @@ def _search_in_file(file_path: Path, search_terms: List[str]) -> Optional[Search
             line_lower = line.lower()
             for term in search_terms:
                 if term.lower() in line_lower:
-                    return SearchResult(
+                    results.append(SearchResult(
                         file_path=_get_relative_path(file_path),
                         line_number=i,
                         content=line.strip()
-                    )
+                    ))
     except Exception:
         pass
-    return None
+    return results
 
 @mcp.tool()
 async def search_files(ctx: Context[ServerSession, None], args: SearchArgs) -> List[SearchResult]:
@@ -376,13 +391,18 @@ async def search_files(ctx: Context[ServerSession, None], args: SearchArgs) -> L
     with concurrent.futures.ThreadPoolExecutor(max_workers=SEARCH_THREADPOOL_WORKERS) as ex:
         tasks = [loop.run_in_executor(ex, _search_in_file, p, search_terms) for p in matched_files]
         for fut in asyncio.as_completed(tasks):
-            result: Optional[SearchResult] = await fut
-            if result:
-                results.append(result)
-            if len(results) >= limit:
-                break
-
-    results = results[:limit]
+            file_results: List[SearchResult] = await fut
+            if file_results:
+                # 如果添加这些结果会超过限制，只添加部分结果
+                remaining_space = limit - len(results)
+                if remaining_space > 0:
+                    if len(file_results) <= remaining_space:
+                        results.extend(file_results)
+                    else:
+                        results.extend(file_results[:remaining_space])
+                # 如果已经达到限制，就停止处理更多文件
+                if len(results) >= limit:
+                    break
     await ctx.info(f"搜索完成：在 {dir_path} 中找到 {len(results)} 个匹配（limit={limit}，关键词：{search_terms}）")
     return results
 
@@ -443,8 +463,21 @@ async def append_to_file(ctx: Context[ServerSession, None], args: AppendFileArgs
         new_content = existing_content + args.content
         path.write_text(new_content, encoding="utf-8")
         
+        result_message = f"内容已追加到文件：{_norm_path_str(path)}"
+        
+        # 如果设置了追加后打开，则尝试打开文件
+        if args.open_after_append:
+            try:
+                open_file_with_obsidian(path)
+                result_message += " (文件已在 Obsidian 中打开)"
+                await ctx.info(f"文件已在 Obsidian 中打开：{path}")
+            except Exception as open_error:
+                error_msg = f"无法打开文件：{str(open_error)}"
+                result_message += f" ({error_msg})"
+                await ctx.warning(f"追加文件成功，但打开失败：{error_msg}")
+        
         await ctx.info(f"在文件末尾追加内容：{path} (追加了 {len(args.content)} 字符)")
-        return f"内容已追加到文件：{_norm_path_str(path)}"
+        return result_message
         
     except Exception as e:
         await ctx.error(f"追加文件内容失败：{str(e)}")
@@ -474,8 +507,21 @@ async def insert_into_file(ctx: Context[ServerSession, None], args: InsertFileAr
         new_content = "\n".join(lines)
         path.write_text(new_content, encoding="utf-8")
         
+        result_message = f"内容已插入到文件第 {args.line_number} 行：{_norm_path_str(path)}"
+        
+        # 如果设置了插入后打开，则尝试打开文件
+        if args.open_after_insert:
+            try:
+                open_file_with_obsidian(path)
+                result_message += " (文件已在 Obsidian 中打开)"
+                await ctx.info(f"文件已在 Obsidian 中打开：{path}")
+            except Exception as open_error:
+                error_msg = f"无法打开文件：{str(open_error)}"
+                result_message += f" ({error_msg})"
+                await ctx.warning(f"插入文件成功，但打开失败：{error_msg}")
+        
         await ctx.info(f"在文件第 {args.line_number} 行插入内容：{path}")
-        return f"内容已插入到文件第 {args.line_number} 行：{_norm_path_str(path)}"
+        return result_message
         
     except Exception as e:
         await ctx.error(f"插入文件内容失败：{str(e)}")
@@ -504,8 +550,21 @@ async def replace_in_file(ctx: Context[ServerSession, None], args: ReplaceFileAr
         path.write_text(new_content, encoding="utf-8")
         
         replacements = content.count(args.search_text)
+        result_message = f"文本替换完成：{_norm_path_str(path)} (替换了 {replacements} 处)"
+        
+        # 如果设置了替换后打开，则尝试打开文件
+        if args.open_after_replace:
+            try:
+                open_file_with_obsidian(path)
+                result_message += " (文件已在 Obsidian 中打开)"
+                await ctx.info(f"文件已在 Obsidian 中打开：{path}")
+            except Exception as open_error:
+                error_msg = f"无法打开文件：{str(open_error)}"
+                result_message += f" ({error_msg})"
+                await ctx.warning(f"替换文件成功，但打开失败：{error_msg}")
+        
         await ctx.info(f"在文件中替换文本：{path} (替换了 {replacements} 处)")
-        return f"文本替换完成：{_norm_path_str(path)} (替换了 {replacements} 处)"
+        return result_message
         
     except Exception as e:
         await ctx.error(f"替换文件内容失败：{str(e)}")
@@ -536,8 +595,21 @@ async def delete_from_file(ctx: Context[ServerSession, None], args: DeleteFileAr
         path.write_text(new_content, encoding="utf-8")
         
         deleted_lines = args.line_end - args.line_start + 1
+        result_message = f"已删除文件第 {args.line_start}-{args.line_end} 行：{_norm_path_str(path)} (共 {deleted_lines} 行)"
+        
+        # 如果设置了删除后打开，则尝试打开文件
+        if args.open_after_delete:
+            try:
+                open_file_with_obsidian(path)
+                result_message += " (文件已在 Obsidian 中打开)"
+                await ctx.info(f"文件已在 Obsidian 中打开：{path}")
+            except Exception as open_error:
+                error_msg = f"无法打开文件：{str(open_error)}"
+                result_message += f" ({error_msg})"
+                await ctx.warning(f"删除文件成功，但打开失败：{error_msg}")
+        
         await ctx.info(f"从文件中删除行 {args.line_start}-{args.line_end}：{path}")
-        return f"已删除文件第 {args.line_start}-{args.line_end} 行：{_norm_path_str(path)} (共 {deleted_lines} 行)"
+        return result_message
         
     except Exception as e:
         await ctx.error(f"删除文件内容失败：{str(e)}")
@@ -612,8 +684,21 @@ async def patch_file(ctx: Context[ServerSession, None], args: PatchFileArgs) -> 
         new_content = "\n".join(new_lines)
         path.write_text(new_content, encoding="utf-8")
         
+        result_message = f"补丁已应用到文件：{_norm_path_str(path)}"
+        
+        # 如果设置了应用补丁后打开，则尝试打开文件
+        if args.open_after_patch:
+            try:
+                open_file_with_obsidian(path)
+                result_message += " (文件已在 Obsidian 中打开)"
+                await ctx.info(f"文件已在 Obsidian 中打开：{path}")
+            except Exception as open_error:
+                error_msg = f"无法打开文件：{str(open_error)}"
+                result_message += f" ({error_msg})"
+                await ctx.warning(f"应用补丁成功，但打开失败：{error_msg}")
+        
         await ctx.info(f"应用补丁到文件：{path}")
-        return f"补丁已应用到文件：{_norm_path_str(path)}"
+        return result_message
         
     except Exception as e:
         await ctx.error(f"应用补丁失败：{str(e)}")
@@ -637,6 +722,9 @@ async def open_note(ctx: Context[ServerSession, None], args: OpenNoteArgs) -> st
         await ctx.info(f"文件已在 Obsidian 中打开：{path}")
         return f"文件已在 Obsidian 中打开：{_norm_path_str(path)}"
         
+    except (ValueError, PermissionError) as e:
+        await ctx.error(f"打开文件失败：{str(e)}")
+        raise
     except Exception as e:
         await ctx.error(f"打开文件失败：{str(e)}")
         raise
