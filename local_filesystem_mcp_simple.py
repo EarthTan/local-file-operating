@@ -10,9 +10,13 @@ import shutil
 import time
 import asyncio
 import concurrent.futures
+import subprocess
+import platform
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+from urllib.parse import quote
+
 
 from pydantic import BaseModel
 
@@ -69,6 +73,10 @@ class WriteFileArgs(BaseModel):
     file_path: str
     content: str
     create_dirs: bool = True
+    open_after_write: bool = False  # 新增参数：写入后是否打开文件
+
+class OpenNoteArgs(BaseModel):
+    file_path: str
 
 class ReadFileArgs(BaseModel):
     file_path: str
@@ -145,6 +153,55 @@ def resolve_path(input_path: str, must_exist: bool = False) -> Path:
 
     return p
 
+def generate_obsidian_uri(file_path: Path) -> str:
+    """
+    生成符合 Obsidian 官方规范的 URI
+    obsidian://open?vault=<encoded vault>&file=<encoded path>
+    """
+    try:
+        relative_path = _get_relative_path(file_path)
+
+        # 统一为正斜杠
+        relative_path = str(relative_path).replace("\\", "/")
+
+        vault_name = ROOT().name
+
+        # 对 vault 和 file 进行 URL 编码
+        vault_encoded = quote(vault_name, safe="")
+        file_encoded = quote(relative_path, safe="/")  # 保留目录结构
+
+        uri = f"obsidian://open?vault={vault_encoded}&file={file_encoded}"
+        return uri
+
+    except Exception as e:
+        raise ValueError(f"生成 Obsidian URI 失败: {str(e)}")
+
+def open_file_with_obsidian(file_path: Path) -> bool:
+    """使用 Obsidian URI 打开文件"""
+    try:
+        uri = generate_obsidian_uri(file_path)
+        
+        # 根据操作系统使用不同的命令打开 URI
+        system = platform.system().lower()
+        
+        if system == "windows":
+            # Windows 使用 start 命令
+            subprocess.run(f'start "" "{uri}"', shell=True, check=True)
+        elif system == "darwin":
+            # macOS 使用 open 命令
+            subprocess.run(["open", uri], check=True)
+        elif system == "linux":
+            # Linux 使用 xdg-open 命令
+            subprocess.run(["xdg-open", uri], check=True)
+        else:
+            raise OSError(f"不支持的操作系统: {system}")
+        
+        return True
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"打开文件失败: Obsidian 可能未安装或无法启动 - {str(e)}")
+    except Exception as e:
+        raise RuntimeError(f"打开文件失败: {str(e)}")
+
 # -----------------------------
 # 工具实现
 # -----------------------------
@@ -194,7 +251,21 @@ async def write_file(ctx: Context[ServerSession, None], args: WriteFileArgs) -> 
 
         path.write_text(args.content, encoding="utf-8")
         await ctx.info(f"写入文件：{path}")
-        return f"文件已写入：{_norm_path_str(path)}"
+        
+        result_message = f"文件已写入：{_norm_path_str(path)}"
+        
+        # 如果设置了写入后打开，则尝试打开文件
+        if args.open_after_write:
+            try:
+                open_file_with_obsidian(path)
+                result_message += " (文件已在 Obsidian 中打开)"
+                await ctx.info(f"文件已在 Obsidian 中打开：{path}")
+            except Exception as open_error:
+                error_msg = f"无法打开文件：{str(open_error)}"
+                result_message += f" ({error_msg})"
+                await ctx.warning(f"写入文件成功，但打开失败：{error_msg}")
+        
+        return result_message
         
     except Exception as e:
         await ctx.error(f"写入文件失败：{str(e)}")
@@ -235,33 +306,64 @@ async def list_directory(ctx: Context[ServerSession, None], args: ListDirArgs) -
     await ctx.info(f"列出目录：{dir_path} (files={len(files_meta)}, directories={len(directories)})")
     return listing
 
-def _search_in_file(file_path: Path, search_term: str) -> List[SearchResult]:
-    """在单个文件中搜索"""
-    results: List[SearchResult] = []
+def _get_relative_path(file_path: Path) -> str:
+    """获取相对于根目录的相对路径"""
     try:
+        root_path = ROOT().resolve()
+        file_abs_path = file_path.resolve()
+        if file_abs_path == root_path:
+            return file_path.name
+        elif root_path in file_abs_path.parents:
+            return str(file_abs_path.relative_to(root_path))
+        else:
+            return str(file_path)
+    except Exception:
+        return str(file_path)
+
+def _search_in_file(file_path: Path, search_terms: List[str]) -> Optional[SearchResult]:
+    """在单个文件中搜索，每个文件只返回一个结果"""
+    try:
+        # 首先检查文件名是否匹配
+        file_name = file_path.name.lower()
+        for term in search_terms:
+            if term.lower() in file_name:
+                return SearchResult(
+                    file_path=_get_relative_path(file_path),
+                    line_number=0,
+                    content=f"文件名匹配: {file_path.name}"
+                )
+        
+        # 然后检查文件内容
         raw = file_path.read_bytes()
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
             text = raw.decode("utf-8", errors="replace")
+        
         lines = text.splitlines()
-        st_lower = search_term.lower()
         for i, line in enumerate(lines, start=1):
-            if st_lower in line.lower():
-                results.append(SearchResult(
-                    file_path=_norm_path_str(file_path),
-                    line_number=i,
-                    content=line.strip()
-                ))
+            line_lower = line.lower()
+            for term in search_terms:
+                if term.lower() in line_lower:
+                    return SearchResult(
+                        file_path=_get_relative_path(file_path),
+                        line_number=i,
+                        content=line.strip()
+                    )
     except Exception:
         pass
-    return results
+    return None
 
 @mcp.tool()
 async def search_files(ctx: Context[ServerSession, None], args: SearchArgs) -> List[SearchResult]:
     """搜索文件内容"""
     directory_path = args.directory_path or str(ROOT())
     dir_path = resolve_path(directory_path, must_exist=True)
+
+    # 解析多关键词 OR 搜索（使用 | 分隔符）
+    search_terms = [term.strip() for term in args.search_term.split('|') if term.strip()]
+    if not search_terms:
+        search_terms = [args.search_term]
 
     pattern = str(dir_path / "**" / args.file_pattern)
     matched_files = [Path(p) for p in glob.glob(pattern, recursive=True)]
@@ -272,16 +374,16 @@ async def search_files(ctx: Context[ServerSession, None], args: SearchArgs) -> L
 
     loop = asyncio.get_running_loop()
     with concurrent.futures.ThreadPoolExecutor(max_workers=SEARCH_THREADPOOL_WORKERS) as ex:
-        tasks = [loop.run_in_executor(ex, _search_in_file, p, args.search_term) for p in matched_files]
+        tasks = [loop.run_in_executor(ex, _search_in_file, p, search_terms) for p in matched_files]
         for fut in asyncio.as_completed(tasks):
-            chunk: List[SearchResult] = await fut
-            if chunk:
-                results.extend(chunk)
+            result: Optional[SearchResult] = await fut
+            if result:
+                results.append(result)
             if len(results) >= limit:
                 break
 
     results = results[:limit]
-    await ctx.info(f"搜索完成：在 {dir_path} 中找到 {len(results)} 个匹配（limit={limit}）")
+    await ctx.info(f"搜索完成：在 {dir_path} 中找到 {len(results)} 个匹配（limit={limit}，关键词：{search_terms}）")
     return results
 
 # -----------------------------
@@ -515,6 +617,28 @@ async def patch_file(ctx: Context[ServerSession, None], args: PatchFileArgs) -> 
         
     except Exception as e:
         await ctx.error(f"应用补丁失败：{str(e)}")
+        raise
+
+@mcp.tool()
+async def open_note(ctx: Context[ServerSession, None], args: OpenNoteArgs) -> str:
+    """打开笔记文件（在 Obsidian 中）"""
+    try:
+        path = resolve_path(args.file_path, must_exist=True)
+        
+        if not path.is_file():
+            raise ValueError(f"路径不是文件：{path}")
+            
+        if not _has_allowed_extension(path):
+            raise PermissionError(f"不允许打开该文件类型：{path.suffix}")
+
+        # 尝试在 Obsidian 中打开文件
+        open_file_with_obsidian(path)
+        
+        await ctx.info(f"文件已在 Obsidian 中打开：{path}")
+        return f"文件已在 Obsidian 中打开：{_norm_path_str(path)}"
+        
+    except Exception as e:
+        await ctx.error(f"打开文件失败：{str(e)}")
         raise
 
 # -----------------------------

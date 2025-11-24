@@ -23,7 +23,7 @@ class MCPConfig:
             self._root_path = Path(env_root).expanduser().resolve()
         else:
             # 默认路径
-            self._root_path = Path("D:/Ariane故事集").expanduser().resolve()
+            self._root_path = Path("C:/Users/{username}/Documents").expanduser().resolve()
     
     def get_root(self) -> Path:
         """获取当前根目录"""

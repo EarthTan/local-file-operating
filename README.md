@@ -89,7 +89,8 @@ Press Ctrl+C to stop server
 | Tool Name | Description | Parameters |
 |-----------|-------------|------------|
 | `read_file` | Read file content | `file_path` |
-| `write_file` | Write or overwrite file | `file_path`, `content`, `create_dirs` |
+| `write_file` | Write or overwrite file | `file_path`, `content`, `create_dirs`, `open_after_write` |
+| `open_note` | Open note file in Obsidian | `file_path` |
 | `list_directory` | List directory contents | `directory_path` |
 | `search_files` | Search file content | `search_term`, `directory_path`, `file_pattern`, `limit` |
 
@@ -141,11 +142,24 @@ await reset_working_directory()
 # Read file
 content = await read_file({"file_path": "notes/readme.md"})
 
-# Write file
+# Write file (without opening)
 await write_file({
     "file_path": "notes/new_note.md", 
     "content": "# New Note\nThis is content",
     "create_dirs": True
+})
+
+# Write file and open in Obsidian
+await write_file({
+    "file_path": "notes/new_note.md", 
+    "content": "# New Note\nThis is content",
+    "create_dirs": True,
+    "open_after_write": True  # 新增参数：写入后自动打开
+})
+
+# Open existing note in Obsidian
+await open_note({
+    "file_path": "notes/existing_note.md"
 })
 
 # List directory
