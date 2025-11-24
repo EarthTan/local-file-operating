@@ -68,6 +68,11 @@ class SearchResult(BaseModel):
     line_number: int
     content: str
 
+class SearchResults(BaseModel):
+    total_matches: int
+    results: List[SearchResult]
+    limit: int
+
 # 请求参数模型
 class WriteFileArgs(BaseModel):
     file_path: str
@@ -84,6 +89,7 @@ class ReadFileArgs(BaseModel):
 
 class ListDirArgs(BaseModel):
     directory_path: Optional[str] = None
+    limit: Optional[int] = 50  # 文件数量限制，默认50，超过50会自动设置为50
 
 class SearchArgs(BaseModel):
     search_term: str
@@ -294,6 +300,12 @@ async def list_directory(ctx: Context[ServerSession, None], args: ListDirArgs) -
     files_meta: List[FileMeta] = []
     directories: List[str] = []
 
+    # 处理限制逻辑
+    limit = args.limit
+    if limit is not None and limit > 50:
+        await ctx.warning(f"限制值 {limit} 超过最大允许值 50，已自动设置为 50")
+        limit = 50
+
     for item in dir_path.iterdir():
         try:
             if item.is_file():
@@ -311,13 +323,20 @@ async def list_directory(ctx: Context[ServerSession, None], args: ListDirArgs) -
         except PermissionError:
             continue
 
+    # 应用文件数量限制
+    if limit is not None and len(files_meta) > limit:
+        files_meta = files_meta[:limit]
+        await ctx.warning(f"文件数量超过限制 {limit}，只显示前 {limit} 个文件")
+        # 在返回结果中添加提示信息
+        await ctx.info(f"注意：由于目录内容过多，只返回了前 {limit} 个文件。如需查看更多文件，请使用更小的限制值。")
+
     listing = DirectoryListing(
         path=_norm_path_str(dir_path),
         files=sorted(files_meta, key=lambda x: x.name.lower()),
         directories=sorted(directories, key=lambda x: x.lower())
     )
 
-    await ctx.info(f"列出目录：{dir_path} (files={len(files_meta)}, directories={len(directories)})")
+    await ctx.info(f"列出目录：{dir_path} (files={len(files_meta)}, directories={len(directories)}, limit={limit})")
     return listing
 
 def _get_relative_path(file_path: Path) -> str:
@@ -370,7 +389,7 @@ def _search_in_file(file_path: Path, search_terms: List[str]) -> List[SearchResu
     return results
 
 @mcp.tool()
-async def search_files(ctx: Context[ServerSession, None], args: SearchArgs) -> List[SearchResult]:
+async def search_files(ctx: Context[ServerSession, None], args: SearchArgs) -> SearchResults:
     """搜索文件内容"""
     directory_path = args.directory_path or str(ROOT())
     dir_path = resolve_path(directory_path, must_exist=True)
@@ -403,8 +422,15 @@ async def search_files(ctx: Context[ServerSession, None], args: SearchArgs) -> L
                 # 如果已经达到限制，就停止处理更多文件
                 if len(results) >= limit:
                     break
-    await ctx.info(f"搜索完成：在 {dir_path} 中找到 {len(results)} 个匹配（limit={limit}，关键词：{search_terms}）")
-    return results
+    
+    total_matches = len(results)
+    await ctx.info(f"搜索完成：在 {dir_path} 中找到 {total_matches} 个匹配（limit={limit}，关键词：{search_terms}）")
+    
+    return SearchResults(
+        total_matches=total_matches,
+        results=results,
+        limit=limit
+    )
 
 # -----------------------------
 # 动态路径管理工具
