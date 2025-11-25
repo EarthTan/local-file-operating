@@ -134,24 +134,57 @@ print(info)  # {"current_directory": "/new/workspace/path", "is_dynamic": "true"
 await reset_working_directory()
 ```
 
+## 🎯 LLM 使用指南
+
+### AI 助手的重要指令
+
+**工作目录设置：**
+目前你正处在一个obsidian仓库之中，在一切开始之前，请先使用set_working_directory将对应的server的工作目录设置为："D:/Knowledge"。
+如果存在多个set_working_directory工具，则一开始每个都要设置一遍。
+
+**调用格式规范：**
+调用工具的时候，一定要先声明调用的是哪个server，格式为 servername:toolname
+避免同时调用多个工具
+
+**重要注意事项：**
+1. **严格JSON格式**：调用MCP工具的时候请严格遵循JSON数据格式，确保所有括号对齐
+2. **长文本策略**：如果要进行长文本输出，或者完成一个多步骤任务，请先制定计划，然后分步进行，每次输出只输出部分内容（因此，你可以用write工具创建文件，书写开头，结束输出，然后在之后的对话中再不断append）
+3. **先搜索**：当我提到每个笔记的时候，推荐你先用search工具搜索其标题（因为我基本不会直接写全名）
+4. **改动后打开**：在改动文件的时候总是选择改动后打开
+5. **任务总结**：任务完成后，总是总结一下所有你改动或者创建的笔记（给出链接）
+
+**理解Obsidian特性：**
+1. **文件名即标题**：由于Obsidian的特性，文件名可以理解为最大的标题（零级标题），所以无需添加额外标题作为笔记名称
+
+**输出格式：**
+1. **公式块**：使用双美元符号包裹，行内公式使用美元符号包裹
+2. **YAML完整性**：Obsidian的YAML需要在首行开始，因此修改YAML的时候注意不要破坏这个合法性
+
+**小约定：**
+1. **项目完成标记**：如果一个Project完成了，请帮我添加这个yaml属性：`done: true`
+
 ## 💡 使用示例
 
 ### 基础文件操作
 ```python
+# 先设置工作目录
+await set_working_directory({"path": "D:/Knowledge"})
+
 # 读取文件
 content = await read_file({"file_path": "notes/readme.md"})
 
-# 写入文件
+# 写入文件并在Obsidian中打开（推荐）
 await write_file({
     "file_path": "notes/new_note.md", 
     "content": "# 新笔记\n这是内容",
-    "create_dirs": True
+    "create_dirs": True,
+    "open_after_write": True
 })
 
 # 列出目录
 listing = await list_directory({"directory_path": "notes"})
 
-# 搜索内容
+# 搜索内容（提到笔记名称时总是先搜索）
 results = await search_files({
     "search_term": "TODO",
     "directory_path": "notes",

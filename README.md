@@ -135,26 +135,52 @@ print(info)  # {"current_directory": "/new/workspace/path", "is_dynamic": "true"
 await reset_working_directory()
 ```
 
+## 🎯 LLM Usage Guidelines
+
+### Essential Instructions for AI Assistants
+
+**Before using any tools, always set the working directory first:**
+```python
+await set_working_directory({"path": "D:/Knowledge"})
+```
+
+**Important Notes:**
+1. **Strict JSON Format**: Always follow JSON data format strictly when calling MCP tools, ensure all brackets are properly aligned
+2. **Long Text Strategy**: For long text output or multi-step tasks, create a plan first and execute step by step. Use `write_file` to create files, write the beginning, then use `append_to_file` in subsequent conversations
+3. **Search First**: When I mention a note, always search for its title first using `search_files` (I rarely use exact full names)
+4. **Open After Modification**: Always choose to open files after modification using `open_after_write=True` or similar parameters
+5. **Task Summary**: After completing tasks, always summarize all modified or created notes (provide links)
+
+**Understanding Obsidian:**
+1. **File Names as Titles**: In Obsidian, file names serve as the main title (level 0 heading), so no additional titles are needed as note names
+
+**Output Format:**
+1. **Math Blocks**: Use double dollar signs for math blocks, single dollar signs for inline math
+2. **YAML Integrity**: Obsidian YAML must start at the first line. When modifying YAML, ensure you don't break this validity
+
+**Small Conventions:**
+1. **Project Completion**: When a project is completed, add this YAML property: `done: true`
+
+## 📚 Detailed LLM Guide
+
+For comprehensive LLM usage instructions, see the [LLM Usage Guide](LLM_使用指南.md) which provides detailed examples, best practices, and troubleshooting tips.
+
 ## 💡 Usage Examples
 
 ### Basic File Operations
 ```python
+# Set working directory first
+await set_working_directory({"path": "D:/Knowledge"})
+
 # Read file
 content = await read_file({"file_path": "notes/readme.md"})
 
-# Write file (without opening)
-await write_file({
-    "file_path": "notes/new_note.md", 
-    "content": "# New Note\nThis is content",
-    "create_dirs": True
-})
-
-# Write file and open in Obsidian
+# Write file and open in Obsidian (recommended)
 await write_file({
     "file_path": "notes/new_note.md", 
     "content": "# New Note\nThis is content",
     "create_dirs": True,
-    "open_after_write": True  # 新增参数：写入后自动打开
+    "open_after_write": True
 })
 
 # Open existing note in Obsidian
@@ -165,7 +191,7 @@ await open_note({
 # List directory
 listing = await list_directory({"directory_path": "notes"})
 
-# Search content
+# Search content (always search first when note name is mentioned)
 results = await search_files({
     "search_term": "TODO",
     "directory_path": "notes",

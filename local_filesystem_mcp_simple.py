@@ -18,7 +18,7 @@ from typing import List, Optional, Dict, Any
 from urllib.parse import quote
 
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from mcp.server.fastmcp import FastMCP, Context
 from mcp.server.session import ServerSession
@@ -77,55 +77,79 @@ class SearchResults(BaseModel):
 
 # 请求参数模型
 class WriteFileArgs(BaseModel):
-    file_path: str
-    content: str
-    create_dirs: bool = True
-    open_after_write: bool = False  # 新增参数：写入后是否打开文件
+    file_path: str = Field(
+        ...,
+        description="要写入的文件路径"
+    )
+    content: str = Field(
+        ...,
+        description="要写入的文件内容"
+    )
+    create_dirs: bool = Field(
+        True,
+        description="如果父目录不存在，是否自动创建目录"
+    )
+    open_after_write: bool = Field(
+        False,
+        description="写入后是否在 Obsidian 中打开文件"
+    )
 
 class OpenNoteArgs(BaseModel):
-    file_path: str
+    file_path: str = Field(
+        ...,
+        description="要打开的笔记文件路径"
+    )
 
 class ReadFileArgs(BaseModel):
-    file_path: str
-    open_after_read: bool = False  # 新增参数：读取后是否打开文件
+    file_path: str = Field(
+        ...,
+        description="要读取的文件路径"
+    )
+    open_after_read: bool = Field(
+        False,
+        description="读取后是否在 Obsidian 中打开文件"
+    )
 
 class ListDirArgs(BaseModel):
-    directory_path: Optional[str] = None
-    limit: Optional[int] = 50  # 文件数量限制，默认50，超过50会自动设置为50
+    directory_path: Optional[str] = Field(
+        None,
+        description="要列出的目录路径，默认为当前工作目录"
+    )
+    limit: Optional[int] = Field(
+        50,
+        description="文件数量限制，默认50，超过50会自动设置为50",
+        ge=1,
+        le=50
+    )
 
 class SearchArgs(BaseModel):
     """搜索文件参数模型"""
     
     search_term: str = Field(
         ...,
-        description="搜索关键词，支持多关键词布尔搜索",
-        example="python MCP"
+        description="搜索关键词，支持多关键词布尔搜索"
     )
     
     directory_path: Optional[str] = Field(
         None,
-        description="搜索目录路径，默认为当前工作目录",
-        example="."
+        description="搜索目录路径，默认为当前工作目录"
     )
     
     file_pattern: str = Field(
         "*.md",
-        description="文件模式匹配，支持通配符",
-        example="*.md"
+        description="文件模式匹配，支持通配符"
     )
     
     limit: int = Field(
         SEARCH_DEFAULT_LIMIT,
         description="搜索结果数量限制",
         ge=1,
-        le=5000,
-        example=10
+        le=5000
     )
     
     search_logic: str = Field(
         "OR",
-        description="搜索逻辑：'OR' 匹配任意关键词，'AND' 必须匹配所有关键词",
-        example="OR"
+        description="搜索逻辑：'OR' 匹配任意关键词，'AND' 必须匹配所有关键词"
     )
     
     search_mode: str = Field(
@@ -134,19 +158,18 @@ class SearchArgs(BaseModel):
         - 'both': 同时搜索文件名和文件内容（默认）
         - 'filename_only': 只搜索文件名
         - 'content_only': 只搜索文件内容
-        """,
-        example="both"
+        """
     )
     
-    @validator("search_logic")
-    def validate_search_logic(cls, v):
+    @field_validator("search_logic")
+    def validate_search_logic(cls, v: str) -> str:
         """验证搜索逻辑参数"""
         if v.upper() not in ["OR", "AND"]:
             raise ValueError("search_logic 必须是 'OR' 或 'AND'")
         return v.upper()
     
-    @validator("search_mode")
-    def validate_search_mode(cls, v):
+    @field_validator("search_mode")
+    def validate_search_mode(cls, v: str) -> str:
         """验证搜索模式参数，支持别名"""
         valid_modes = {
             "both": "both",
@@ -163,36 +186,96 @@ class SearchArgs(BaseModel):
         return normalized
 
 class SetWorkingDirectoryArgs(BaseModel):
-    path: str
+    path: str = Field(
+        ...,
+        description="要设置为工作目录的路径"
+    )
 
 # 部分编辑参数模型
 class AppendFileArgs(BaseModel):
-    file_path: str
-    content: str
-    open_after_append: bool = False  # 新增参数：追加后是否打开文件
+    file_path: str = Field(
+        ...,
+        description="要追加内容的文件路径"
+    )
+    content: str = Field(
+        ...,
+        description="要追加的内容"
+    )
+    open_after_append: bool = Field(
+        False,
+        description="追加后是否在 Obsidian 中打开文件"
+    )
 
 class InsertFileArgs(BaseModel):
-    file_path: str
-    line_number: int
-    content: str
-    open_after_insert: bool = False  # 新增参数：插入后是否打开文件
+    file_path: str = Field(
+        ...,
+        description="要插入内容的文件路径"
+    )
+    line_number: int = Field(
+        ...,
+        description="要插入内容的行号（从1开始）",
+        ge=1
+    )
+    content: str = Field(
+        ...,
+        description="要插入的内容"
+    )
+    open_after_insert: bool = Field(
+        False,
+        description="插入后是否在 Obsidian 中打开文件"
+    )
 
 class ReplaceFileArgs(BaseModel):
-    file_path: str
-    search_text: str
-    replace_text: str
-    open_after_replace: bool = False  # 新增参数：替换后是否打开文件
+    file_path: str = Field(
+        ...,
+        description="要替换内容的文件路径"
+    )
+    search_text: str = Field(
+        ...,
+        description="要搜索并替换的文本"
+    )
+    replace_text: str = Field(
+        ...,
+        description="替换后的文本"
+    )
+    open_after_replace: bool = Field(
+        False,
+        description="替换后是否在 Obsidian 中打开文件"
+    )
 
 class DeleteFileArgs(BaseModel):
-    file_path: str
-    line_start: int
-    line_end: int
-    open_after_delete: bool = False  # 新增参数：删除后是否打开文件
+    file_path: str = Field(
+        ...,
+        description="要删除内容的文件路径"
+    )
+    line_start: int = Field(
+        ...,
+        description="要删除的起始行号（从1开始）",
+        ge=1
+    )
+    line_end: int = Field(
+        ...,
+        description="要删除的结束行号（从1开始）",
+        ge=1
+    )
+    open_after_delete: bool = Field(
+        False,
+        description="删除后是否在 Obsidian 中打开文件"
+    )
 
 class PatchFileArgs(BaseModel):
-    file_path: str
-    patch_content: str
-    open_after_patch: bool = False  # 新增参数：应用补丁后是否打开文件
+    file_path: str = Field(
+        ...,
+        description="要应用补丁的文件路径"
+    )
+    patch_content: str = Field(
+        ...,
+        description="统一差异格式的补丁内容"
+    )
+    open_after_patch: bool = Field(
+        False,
+        description="应用补丁后是否在 Obsidian 中打开文件"
+    )
 
 # -----------------------------
 # 辅助函数
