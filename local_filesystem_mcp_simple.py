@@ -18,7 +18,7 @@ from typing import List, Optional, Dict, Any
 from urllib.parse import quote
 
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, validator
 
 from mcp.server.fastmcp import FastMCP, Context
 from mcp.server.session import ServerSession
@@ -67,11 +67,13 @@ class SearchResult(BaseModel):
     file_path: str
     line_number: int
     content: str
+    matched_terms: List[str]
 
 class SearchResults(BaseModel):
     total_matches: int
     results: List[SearchResult]
     limit: int
+    search_logic: str
 
 # 请求参数模型
 class WriteFileArgs(BaseModel):
@@ -92,10 +94,73 @@ class ListDirArgs(BaseModel):
     limit: Optional[int] = 50  # 文件数量限制，默认50，超过50会自动设置为50
 
 class SearchArgs(BaseModel):
-    search_term: str
-    directory_path: Optional[str] = None
-    file_pattern: str = "*.md"
-    limit: int = SEARCH_DEFAULT_LIMIT
+    """搜索文件参数模型"""
+    
+    search_term: str = Field(
+        ...,
+        description="搜索关键词，支持多关键词布尔搜索",
+        example="python MCP"
+    )
+    
+    directory_path: Optional[str] = Field(
+        None,
+        description="搜索目录路径，默认为当前工作目录",
+        example="."
+    )
+    
+    file_pattern: str = Field(
+        "*.md",
+        description="文件模式匹配，支持通配符",
+        example="*.md"
+    )
+    
+    limit: int = Field(
+        SEARCH_DEFAULT_LIMIT,
+        description="搜索结果数量限制",
+        ge=1,
+        le=5000,
+        example=10
+    )
+    
+    search_logic: str = Field(
+        "OR",
+        description="搜索逻辑：'OR' 匹配任意关键词，'AND' 必须匹配所有关键词",
+        example="OR"
+    )
+    
+    search_mode: str = Field(
+        "both",
+        description="""搜索模式：
+        - 'both': 同时搜索文件名和文件内容（默认）
+        - 'filename_only': 只搜索文件名
+        - 'content_only': 只搜索文件内容
+        """,
+        example="both"
+    )
+    
+    @validator("search_logic")
+    def validate_search_logic(cls, v):
+        """验证搜索逻辑参数"""
+        if v.upper() not in ["OR", "AND"]:
+            raise ValueError("search_logic 必须是 'OR' 或 'AND'")
+        return v.upper()
+    
+    @validator("search_mode")
+    def validate_search_mode(cls, v):
+        """验证搜索模式参数，支持别名"""
+        valid_modes = {
+            "both": "both",
+            "filename_only": "filename_only",
+            "filename": "filename_only",  # 支持别名
+            "content_only": "content_only",
+            "content": "content_only"     # 支持别名
+        }
+        
+        normalized = valid_modes.get(v.lower())
+        if normalized is None:
+            raise ValueError(f"search_mode 必须是 {list(valid_modes.keys())} 之一")
+        
+        return normalized
 
 class SetWorkingDirectoryArgs(BaseModel):
     path: str
@@ -353,51 +418,109 @@ def _get_relative_path(file_path: Path) -> str:
     except Exception:
         return str(file_path)
 
-def _search_in_file(file_path: Path, search_terms: List[str]) -> List[SearchResult]:
-    """在单个文件中搜索，返回所有匹配结果"""
+# 布尔搜索解析器
+class BooleanSearchParser:
+    """解析布尔搜索表达式"""
+    
+    @staticmethod
+    def parse_expression(expression: str, logic: str = "OR") -> List[List[str]]:
+        """
+        解析搜索表达式
+        返回: 列表的列表，每个子列表表示一个AND组
+        """
+        if logic.upper() == "AND":
+            # AND 逻辑：所有关键词都必须匹配
+            terms = [term.strip() for term in expression.split() if term.strip()]
+            return [terms] if terms else []
+        else:
+            # OR 逻辑：每个关键词单独匹配
+            terms = [term.strip() for term in expression.split() if term.strip()]
+            return [[term] for term in terms] if terms else []
+
+def _search_in_file(file_path: Path, search_groups: List[List[str]], search_mode: str = "both") -> List[SearchResult]:
+    """在单个文件中搜索，支持布尔逻辑和搜索模式"""
     results: List[SearchResult] = []
     try:
-        # 首先检查文件名是否匹配
-        file_name = file_path.name.lower()
-        for term in search_terms:
-            if term.lower() in file_name:
-                results.append(SearchResult(
-                    file_path=_get_relative_path(file_path),
-                    line_number=0,
-                    content=f"文件名匹配: {file_path.name}"
-                ))
-        
-        # 然后检查文件内容
-        raw = file_path.read_bytes()
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            text = raw.decode("utf-8", errors="replace")
-        
-        lines = text.splitlines()
-        for i, line in enumerate(lines, start=1):
-            line_lower = line.lower()
-            for term in search_terms:
-                if term.lower() in line_lower:
+        # 根据搜索模式决定搜索范围
+        if search_mode in ["both", "filename_only"]:
+            # 检查文件名是否匹配
+            file_name = file_path.name.lower()
+            for group in search_groups:
+                if all(term.lower() in file_name for term in group):
                     results.append(SearchResult(
                         file_path=_get_relative_path(file_path),
-                        line_number=i,
-                        content=line.strip()
+                        line_number=0,
+                        content=f"文件名匹配: {file_path.name}",
+                        matched_terms=group
                     ))
+                    break  # 文件名匹配一个组就足够
+        
+        if search_mode in ["both", "content_only"]:
+            # 检查文件内容
+            raw = file_path.read_bytes()
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                text = raw.decode("utf-8", errors="replace")
+            
+            lines = text.splitlines()
+            for i, line in enumerate(lines, start=1):
+                line_lower = line.lower()
+                
+                for group in search_groups:
+                    # 检查该组中的所有关键词是否都在当前行中
+                    if all(term.lower() in line_lower for term in group):
+                        results.append(SearchResult(
+                            file_path=_get_relative_path(file_path),
+                            line_number=i,
+                            content=line.strip(),
+                            matched_terms=group
+                        ))
+                        break  # 一行匹配一个组就足够
+    
     except Exception:
         pass
+    
     return results
 
 @mcp.tool()
 async def search_files(ctx: Context[ServerSession, None], args: SearchArgs) -> SearchResults:
-    """搜索文件内容"""
+    """
+    搜索文件内容，支持布尔逻辑和搜索模式
+    
+    参数:
+    - search_term: 搜索关键词，支持多关键词布尔搜索
+    - directory_path: 搜索目录路径，默认为当前工作目录
+    - file_pattern: 文件模式匹配，支持通配符，默认 "*.md"
+    - limit: 搜索结果数量限制，默认 200，最大 5000
+    - search_logic: 搜索逻辑："OR" 匹配任意关键词，"AND" 必须匹配所有关键词
+    - search_mode: 搜索模式：
+        - "both": 同时搜索文件名和文件内容（默认）
+        - "filename_only" 或 "filename": 只搜索文件名
+        - "content_only" 或 "content": 只搜索文件内容
+    
+    示例:
+    - 搜索文件名包含 "python" 的文件: search_mode="filename", search_term="python"
+    - 搜索内容包含 "MCP" 的文件: search_mode="content", search_term="MCP"
+    - 同时搜索文件名和内容: search_mode="both", search_term="python MCP"
+    - 布尔搜索 (AND 逻辑): search_logic="AND", search_term="python MCP"
+    - 布尔搜索 (OR 逻辑): search_logic="OR", search_term="python MCP"
+    """
     directory_path = args.directory_path or str(ROOT())
     dir_path = resolve_path(directory_path, must_exist=True)
 
-    # 解析多关键词 OR 搜索（使用 | 分隔符）
-    search_terms = [term.strip() for term in args.search_term.split('|') if term.strip()]
-    if not search_terms:
-        search_terms = [args.search_term]
+    # 解析搜索表达式
+    parser = BooleanSearchParser()
+    search_groups = parser.parse_expression(args.search_term, args.search_logic)
+    
+    if not search_groups:
+        await ctx.warning("搜索表达式为空，请提供有效的搜索关键词")
+        return SearchResults(
+            total_matches=0,
+            results=[],
+            limit=args.limit,
+            search_logic=args.search_logic
+        )
 
     pattern = str(dir_path / "**" / args.file_pattern)
     matched_files = [Path(p) for p in glob.glob(pattern, recursive=True)]
@@ -408,7 +531,7 @@ async def search_files(ctx: Context[ServerSession, None], args: SearchArgs) -> S
 
     loop = asyncio.get_running_loop()
     with concurrent.futures.ThreadPoolExecutor(max_workers=SEARCH_THREADPOOL_WORKERS) as ex:
-        tasks = [loop.run_in_executor(ex, _search_in_file, p, search_terms) for p in matched_files]
+        tasks = [loop.run_in_executor(ex, _search_in_file, p, search_groups, args.search_mode) for p in matched_files]
         for fut in asyncio.as_completed(tasks):
             file_results: List[SearchResult] = await fut
             if file_results:
@@ -424,12 +547,13 @@ async def search_files(ctx: Context[ServerSession, None], args: SearchArgs) -> S
                     break
     
     total_matches = len(results)
-    await ctx.info(f"搜索完成：在 {dir_path} 中找到 {total_matches} 个匹配（limit={limit}，关键词：{search_terms}）")
+    await ctx.info(f"搜索完成：在 {dir_path} 中找到 {total_matches} 个匹配（limit={limit}，逻辑：{args.search_logic}，模式：{args.search_mode}）")
     
     return SearchResults(
         total_matches=total_matches,
         results=results,
-        limit=limit
+        limit=limit,
+        search_logic=args.search_logic
     )
 
 # -----------------------------
